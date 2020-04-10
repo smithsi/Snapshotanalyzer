@@ -2,20 +2,132 @@ import boto3
 import click
 
 session = boto3.Session(profile_name='shotty')
-ec2 = session.client('ec2')
+ec2 = session.resource('ec2')
 
-@click.command()
-def list_instances():
+def filter_instances(project):
+    instances=[]
+
+    if project:
+        filters=[{'Name':'tag:Project','Values':[project]}]
+        instances=ec2.instances.filter(Filters=filters)
+    else:
+        instances = ec2.instances.all()
+
+    return instances
+
+@click.group()
+def cli():
+    """Shotty manages snapshots"""
+
+@cli.group('volumes')
+def volumes():
+    """Commands for volumes"""
+
+@volumes.command('list')
+@click.option('--project', default=None,
+help="Only volumes for project (tag Project:<Name>)")
+def list_volumes(project):
+    "List EC2 volumes"
+    instances=filter_instances(project)
+    
+    for i in instances:
+        for v in i.volumes.all():
+            print(",".join((
+                v.id,
+                i.id,
+                v.state,
+                str(v.size)+"Gb",
+                v.encrypted & "Encrypted" or "Not Encrypted"
+            )))
+    return
+
+@cli.group('snapshots')
+def snapshots():
+    """Commands for snapshots"""
+
+@snapshots.command('list')
+@click.option('--project', default=None,
+help="Only snapshots for project (tag Project:<Name>)")
+def list_snapshots(project):
+
+    instances=filter_instances(project)
+    
+    for i in instances:
+        for v in i.volumes.all():
+            for s in v.snapshots.all():
+                print(",".join((
+                    v.id,
+                    i.id,
+                    s.id,
+                    s.state,
+                    s.progress,
+                    s.start_time.strftime("%c")
+                )))
+    return
+
+@cli.group('instances')
+def instances():
+    """Commands for instances"""
+
+@instances.command('snapshot',help='Create snapshots for all volumes')
+@click.option('--project', default=None,
+help="Only snapshots for project (tag Project:<Name>)")
+def create_snapshots(project):
+    "Create snapshots for EC2 instances"
+    instances=filter_instances(project)
+    for i in instances:
+        i.stop()
+        for v in i.volumes.all():
+            print("Creating snapshot of {0}".format(v.id))
+            v.create_snapshot(Description="Created by SnapshotAnalyzer")
+    return
+
+@instances.command('list')
+@click.option('--project', default=None,
+help="Only instances for project (tag Project:<Name>)")
+def list_instances(project):
     "List EC2 instances"
-    for i in ec2.describe_instances():
+    instances=filter_instances(project)
+        
+    for i in instances:
+        tags= {t['Key']:t['Value'] for t in i.tags or []}
         print(','.join((
         i.id,
         i.instance_type,
         i.placement['Availability Zone'],
         i.state['Name'],
-        i.public_dns_name())))
-    
+        i.public_dns_name,
+        tags.get('Project','<no project>'))))
+
     return
-    
+
+@instances.command('stop')
+@click.option('--project', default=None,
+help="Only instances for project (tag Project:<Name>)")
+def stop_instances(project):
+    "Stop EC2 instances"
+
+    instances=filter_instances(project)
+
+    for i in instances:
+        print("Stopping {0}...".format(i.id))
+        i.stop()
+
+@instances.command('start')
+@click.option('--project', default=None,
+help="Only instances for project (tag Project:<Name>)")
+def start_instances(project):
+    "Start EC2 instances"
+
+    instances=filter_instances(project)
+
+    for i in instances:
+        print("Starting {0}...".format(i.id))
+        i.start()
+
 if __name__=='__main__':
-    list_instances()
+    cli()
+
+# Start 
+# Stop
+# Tags
